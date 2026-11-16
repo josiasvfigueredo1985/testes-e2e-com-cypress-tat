@@ -4,12 +4,19 @@
   "description": "Sample project to demonstrate e2e tests written with Cypress running on GitHub Actions",
   "main": "index.js",
   "scripts": {
-    "lint": "eslint cypress/**/*.js",
-    "lint:fix": "eslint cypress/**/*.js --fix",
+    "lint": "eslint cypress cypress.config.js eslint.config.js",
+    "lint:fix": "eslint cypress cypress.config.js eslint.config.js --fix",
     "cy:open": "cypress open",
     "cy:open:tablet": "cypress open --config viewportWidth=767,viewportHeight=480",
-    "test": "cypress run --record --tag 'desktop'",
-    "test:tablet": "cypress run --record --tag 'tablet' --config viewportWidth=767,viewportHeight=480 --spec cypress/integration/authenticatedScenarios.spec.js --env grepTags=@desktop-and-tablet"
+    "test": "cypress run",
+    "test:public": "cypress run --expose grepTags=@public,grepFilterSpecs=true,grepOmitFiltered=true",
+    "test:tablet": "npm run test:public -- --config viewportWidth=767,viewportHeight=480",
+    "test:authenticated": "cypress run --expose grepTags=@authenticated,grepFilterSpecs=true,grepOmitFiltered=true",
+    "test:signup": "cypress run --expose grepTags=@signup,grepFilterSpecs=true,grepOmitFiltered=true",
+    "test:billing": "cypress run --expose grepTags=@billing,grepFilterSpecs=true,grepOmitFiltered=true"
+  },
+  "engines": {
+    "node": "^26.0.0"
   },
   "keywords": [],
   "devDependencies": {

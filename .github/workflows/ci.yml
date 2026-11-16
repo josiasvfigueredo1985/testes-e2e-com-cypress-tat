@@ -2,50 +2,152 @@ name: ci
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_authenticated:
+        description: Run real-account notes and login tests (requires account secrets)
+        type: boolean
+        default: false
+      run_signup:
+        description: Create a test account using Mailosaur (requires email secrets)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   eslint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v2
-    - name: Install modules
-      run: npm install
-    - name: Run ESLint
-      run: npm run lint
-  cypress-tests-desktop:
-    needs: eslint
-    runs-on: ubuntu-latest
-    container: cypress/browsers:node12.18.3-chrome87-ff82
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-
-      - name: Run end-to-end tests on desktop viewport 🧪
-        uses: cypress-io/github-action@v2
-        env:
-          CYPRESS_USER_EMAIL: ${{ secrets.CYPRESS_USER_EMAIL }}
-          CYPRESS_USER_PASSWORD: ${{ secrets.CYPRESS_USER_PASSWORD }}
-          CYPRESS_MAILOSAUR_SERVER_ID: ${{ secrets.CYPRESS_MAILOSAUR_SERVER_ID }}
-          CYPRESS_MAILOSAUR_API_KEY: ${{ secrets.CYPRESS_MAILOSAUR_API_KEY }}
-          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          command: npm test
-  cypress-tests-tablet:
-    needs: eslint
-    runs-on: ubuntu-latest
-    container: cypress/browsers:node12.18.3-chrome87-ff82
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-
-      - name: Run end-to-end tests on tablet viewport 🧪
-        uses: cypress-io/github-action@v2
+          node-version-file: .node-version
+          cache: npm
+      - name: Install dependencies without the unused Cypress binary
+        run: npm ci
         env:
-          CYPRESS_USER_EMAIL: ${{ secrets.CYPRESS_USER_EMAIL }}
-          CYPRESS_USER_PASSWORD: ${{ secrets.CYPRESS_USER_PASSWORD }}
-          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          CYPRESS_INSTALL_BINARY: '0'
+      - run: npm run lint
+
+  public-tests:
+    needs: eslint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - viewport: desktop
+            width: 1280
+            height: 720
+          - viewport: tablet
+            width: 767
+            height: 480
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          command: npm run test:tablet
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Run public tests on ${{ matrix.viewport }}
+        run: npm run test:public -- --browser chrome --config viewportWidth=${{ matrix.width }},viewportHeight=${{ matrix.height }}
+      - name: Upload browser evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: public-${{ matrix.viewport }}
+          path: |
+            cypress/screenshots
+            cypress/videos
+          if-no-files-found: ignore
+          retention-days: 7
+
+  authenticated-tests:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_authenticated }}
+    needs: eslint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - viewport: desktop
+            width: 1280
+            height: 720
+          - viewport: tablet
+            width: 767
+            height: 480
+    env:
+      CYPRESS_USER_EMAIL: ${{ secrets.CYPRESS_USER_EMAIL }}
+      CYPRESS_USER_PASSWORD: ${{ secrets.CYPRESS_USER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Require dedicated test-account credentials
+        shell: bash
+        run: |
+          if [[ -z "$CYPRESS_USER_EMAIL" || -z "$CYPRESS_USER_PASSWORD" ]]; then
+            echo "::error::Set CYPRESS_USER_EMAIL and CYPRESS_USER_PASSWORD repository secrets."
+            exit 1
+          fi
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Run real-account tests on ${{ matrix.viewport }}
+        run: npm run test:authenticated -- --browser chrome --config viewportWidth=${{ matrix.width }},viewportHeight=${{ matrix.height }}
+      - name: Upload browser evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: authenticated-${{ matrix.viewport }}
+          path: |
+            cypress/screenshots
+            cypress/videos
+          if-no-files-found: ignore
+          retention-days: 7
+
+  signup-test:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_signup }}
+    needs: eslint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CYPRESS_USER_PASSWORD: ${{ secrets.CYPRESS_USER_PASSWORD }}
+      CYPRESS_MAILOSAUR_SERVER_ID: ${{ secrets.CYPRESS_MAILOSAUR_SERVER_ID }}
+      CYPRESS_MAILOSAUR_API_KEY: ${{ secrets.CYPRESS_MAILOSAUR_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Require Mailosaur credentials
+        shell: bash
+        run: |
+          if [[ -z "$CYPRESS_USER_PASSWORD" || -z "$CYPRESS_MAILOSAUR_SERVER_ID" || -z "$CYPRESS_MAILOSAUR_API_KEY" ]]; then
+            echo "::error::Set CYPRESS_USER_PASSWORD, CYPRESS_MAILOSAUR_SERVER_ID and CYPRESS_MAILOSAUR_API_KEY repository secrets."
+            exit 1
+          fi
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run test:signup -- --browser chrome
+      - name: Upload browser evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: signup-desktop
+          path: |
+            cypress/screenshots
+            cypress/videos
+          if-no-files-found: ignore
+          retention-days: 7
